@@ -1,32 +1,28 @@
-import pathlib
-
-import pandas as pd
 import os
-import seaborn
 import warnings
 
+import PIL
+import pandas as pd
 from keras.src.utils import to_categorical
-from tqdm.notebook import tqdm
+
 warnings.filterwarnings('ignore')
 import numpy as np
-import matplotlib.pyplot as plt
 import tensorflow as tf
-from keras import layers
-from keras.models import Sequential
 from tensorflow import keras
 from sklearn.preprocessing import LabelEncoder
 
+
 def extract_features(images):
-    features = []
+    AllFeatures = []
     for image in (images):
-        print(image)
-        if image[13] != '.' and image[10] != '.':
-            img = keras.preprocessing.image.load_img(image, grayscale=True, target_size = (48,48))
+        if ".DS_Store" not in image:
+            img = keras.preprocessing.image.load_img(image, grayscale=True, target_size=(48, 48))
             img = np.array(img)
-            features.append(img)
-    features = np.array(features)
-    features = features.reshape(len(features), 48, 48, 1)
-    return features
+            AllFeatures.append(img)
+    AllFeatures = np.array(AllFeatures)
+    AllFeatures = AllFeatures.reshape(len(AllFeatures), 48, 48, 1)
+    return AllFeatures
+
 
 def load_dataset(directory):
     image_paths = []
@@ -34,19 +30,20 @@ def load_dataset(directory):
 
     for label in os.listdir(directory):
         if not label.startswith('.'):
-            for filename in os.listdir(directory + label):
-                image_path = os.path.join(directory, label, filename)
-                image_paths.append(image_path)
-                labels.append(label)
+            label_dir = os.path.join(directory, label)
+            for filename in os.listdir(label_dir):
+                if not filename.startswith('.'):
+                    image_path = os.path.join(label_dir, filename)
+                    image_paths.append(image_path)
+                    labels.append(label)
 
-            print(label, "Completed")
 
     return image_paths, labels
+
 
 TRAIN_DIR = 'rizz/'
 TEST_DIR = 'rizz/'
 
-# Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     train = pd.DataFrame()
     train['image'], train['label'] = load_dataset(TRAIN_DIR)
@@ -58,108 +55,43 @@ if __name__ == '__main__':
     test = test.sample(frac=1).reset_index(drop=True)
     test.head()
 
-    train_features = extract_features(train['image'])
-    test_features = extract_features(test['image'])
+    LabelEncode = LabelEncoder()
+    LabelEncode.fit(train['label'])
+    y_train = LabelEncode.transform(train['label'])
+    y_test = LabelEncode.transform(test['label'])
 
-    x_train = train_features/255.0
-    x_test = test_features/255.0
+    num_classes = len(LabelEncode.classes_)
 
-    le = LabelEncoder()
-    le.fit(train['label'])
-    y_train = le.transform(train['label'])
-    y_test = le.transform(test['label'])
+    y_train = to_categorical(y_train, num_classes=num_classes)
+    y_test = to_categorical(y_test, num_classes=num_classes)
 
-    y_train = to_categorical(y_train, num_classes=7)
-    y_test = to_categorical(y_test, num_classes=7)
+    model = keras.models.load_model('rizz model.h5')
 
-    input_shape = (48,48,1)
-    output_class = 2
+    input1 = input("Input your face in absolute path form to determine rizz\n-1 to exit\n")
+    while (input1 != "-1"): # While Loop for CLI
+        imageUrl = input1
 
-    data_augmentation = keras.Sequential([
-        layers.RandomFlip("horizontal", input_shape=(48, 48, 1)),
-        layers.RandomFlip("vertical", input_shape=(48, 48, 1)),
-        layers.RandomRotation(1),
-        layers.RandomZoom(1),
-    ])
-    model = Sequential([
-        data_augmentation,
-        layers.Rescaling(1. / 255),
-        layers.Conv2D(128, 3, padding='same', activation='relu'),
-        layers.MaxPooling2D(),
-        layers.Dropout(0.4),
-        layers.Conv2D(256, 3, padding='same', activation='relu'),
-        layers.MaxPooling2D(),
-        layers.Dropout(0.4),
-        layers.Conv2D(512, 3, padding='same', activation='relu'),
-        layers.MaxPooling2D(),
-        layers.Dropout(0.4),
-        layers.Flatten(),
-        layers.Dense(512, activation='relu'),
-        layers.Dropout(0.4),
-        layers.Dense(256, activation='relu'),
-        layers.Dropout(0.4),
-        layers.Dense(output_class, activation='softmax', name="outputs")
-    ])
+        # Make images grayscale
+        img = PIL.Image.open(imageUrl).convert('L')
 
-    model.compile(optimizer='adam',
-                  loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-                  metrics=['accuracy'])
+        # 48x48 size images
+        img = img.resize((48, 48))
 
-    epochs = 2
-    print(x_train.shape)
-    print(y_train.shape)
-    history = model.fit(
-        x=x_train,
-        y=y_train,
-        batch_size = 128,
-        epochs=epochs,
-        validation_data=(x_test,y_test)
-    )
+        # Change image to numpy array and expand dimensions
+        ImageArray = np.array(img)
 
-    acc = history.history['accuracy']
-    val_acc = history.history['val_accuracy']
+        ImageArray = np.expand_dims(ImageArray, axis=-1)
+        ImageArray = np.expand_dims(ImageArray, axis=0)
 
-    loss = history.history['loss']
-    val_loss = history.history['val_loss']
+        # Normalize the image
+        ImageArray = ImageArray / 255.0
 
-    epochs_range = range(epochs)
+        # Finish all predictions
+        predictions = model.predict(ImageArray)
+        PredictionLabel = LabelEncode.inverse_transform([predictions.argmax()])[0]
+        score = tf.nn.softmax(predictions[0])
 
-    plt.figure(figsize=(8, 8))
-    plt.subplot(1, 2, 1)
-    plt.plot(epochs_range, acc, label='Training Accuracy')
-    plt.plot(epochs_range, val_acc, label='Validation Accuracy')
-    plt.legend(loc='lower right')
-    plt.title('Training and Validation Accuracy')
-
-    plt.subplot(1, 2, 2)
-    plt.plot(epochs_range, loss, label='Training Loss')
-    plt.plot(epochs_range, val_loss, label='Validation Loss')
-    plt.legend(loc='upper right')
-    plt.title('Training and Validation Loss')
-    plt.show()
-
-    imageUrl = "/Users/eren-mac/PycharmProjects/rizz calc /rizz/rizz/1.png"
-    # sunflower_path = tf.keras.utils.get_file('abs', origin=imageUrl)
-
-    img = tf.keras.utils.load_img(
-        imageUrl, target_size=(48, 48)
-    )
-    img_array = tf.keras.utils.img_to_array(img)
-    img_array = tf.expand_dims(img_array, 0)  # Create a batch
-
-    predictions = model.predict(img_array[0].reshape(1, 48, 48, 1))
-    prediction_label = le.inverse_transform([predictions.argmax()])[0]
-
-    score = tf.nn.softmax(predictions[0])
-    print("Predicted Output:", prediction_label)
-
-    if class_names[np.argmax(score)] != "not a person":
-        print(
-            "This image most likely has {} with a {:.2f} percent confidence."
-            .format(class_names[np.argmax(score)], 100 * np.max(score))
-        )
-    else:
-        print(
-            "This image most likely is {} with a {:.2f} percent confidence."
-            .format(class_names[np.argmax(score)], 100 * np.max(score))
-        )
+        # Print out output
+        print("Predicted Output:", PredictionLabel)
+        print("Confidence:", 100 * np.max(score))
+        input1 = input("Input your face in absolute path form to determine rizz\n-1 to exit\n")
